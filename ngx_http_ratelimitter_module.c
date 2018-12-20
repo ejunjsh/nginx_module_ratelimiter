@@ -1,3 +1,8 @@
+#include <ngx_config.h>
+#include <ngx_core.h>
+#include <ngx_http.h>
+#include <ngx_crypt.h>
+
 typedef struct{
     u_char   rbtree_node_data;
     ngx_queue_t queue;
