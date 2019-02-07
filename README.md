@@ -23,4 +23,4 @@ download the nginx source code
 
     ./nginx
 
-you will see the 403 Forbidden in the browser when you refresh the page many times during 1s
+you will see the 403 Forbidden in the browser when you refresh the same page many times during 1s
