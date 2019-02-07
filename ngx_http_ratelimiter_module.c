@@ -1,7 +1,12 @@
-#include <ngx_config.h>
-#include <ngx_core.h>
-#include <ngx_http.h>
-#include <ngx_crypt.h>
+#include "ngx_core.h"
+#include "ngx_string.h"
+#include "ngx_buf.h"
+#include "ngx_module.h"
+#include "ngx_conf_file.h"
+#include "ngx_http.h"  // 必须在ngx_http_request.h之前包含该文件
+#include "ngx_http_request.h"
+#include "ngx_http_config.h"
+#include "ngx_http_core_module.h"
 
 typedef struct{
     u_char   rbtree_node_data;
@@ -10,23 +15,6 @@ typedef struct{
     u_short len;
     u_char data[1];
 } ngx_http_ratelimiter_node_t;
-
-
-
-ngx_module_t ngx_http_ratelimiter_modulte={
-    NGX_MODULE_V1,
-    &ngx_http_ratelimiter_modulte_ctx,
-    ngx_http_ratelimiter_commands,
-    NGX_HTTP_MODULE,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NGX_MODULE_V1_PADDING
-};
 
 typedef struct{
     ngx_rbtree_t rbtree;
@@ -41,10 +29,114 @@ typedef struct{
     ngx_http_ratelimiter_shm_t *sh;
 } ngx_http_ratelimiter_conf_t;
 
+ngx_module_t ngx_http_ratelimiter_module;
+
+static ngx_int_t
+ngx_http_ratelimiter_lookup(ngx_http_request_t *r, ngx_http_ratelimiter_conf_t *conf, ngx_uint_t hash, u_char* data, size_t len);
+
+static char *
+ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t *cmd, void* conf);
+
+static void
+ngx_http_ratelimiter_expire(ngx_http_request_t *r,ngx_http_ratelimiter_conf_t *conf);
+
+static ngx_int_t
+ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data);
+
+static ngx_int_t
+ngx_http_ratelimiter_handler(ngx_http_request_t *r) {
+    size_t len;
+    uint32_t hash;
+    ngx_int_t rc;
+    ngx_http_ratelimiter_conf_t *conf;
+    conf = ngx_http_get_module_main_conf(r, ngx_http_ratelimiter_module); 
+    rc = NGX_DECLINED;
+    if (conf->interval == -1)
+        return rc;
+    len = r->connection->addr_text.len + r->uri.len;
+    u_char* data = ngx_palloc(r->pool, len); 
+    ngx_memcpy(data, r->uri.data, r->uri.len); 
+    ngx_memcpy(data+r->uri.len, r->connection->addr_text.data, r->connection->addr_text.len); 
+    hash = ngx_crc32_short(data, len);
+    ngx_shmtx_lock(&conf->shpool->mutex); 
+    rc = ngx_http_ratelimiter_lookup(r, conf, hash, data, len); 
+    ngx_shmtx_unlock(&conf->shpool->mutex); 
+    return rc;
+}
+
+static ngx_int_t
+ngx_http_ratelimiter_init(ngx_conf_t *cf)
+{
+    ngx_http_handler_pt *h;
+    ngx_http_core_main_conf_t *cmcf;
+    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module); 
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers); 
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    *h = ngx_http_ratelimiter_handler;
+    return NGX_OK;
+}
+
+static void *
+ngx_http_ratelimiter_create_main_conf(ngx_conf_t *cf) {
+    ngx_http_ratelimiter_conf_t *conf;
+    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_ratelimiter_conf_t));
+    if (conf == NULL) {
+        return NULL;
+    }
+
+    conf->interval = -1;
+    conf->shmsize = -1;
+    return conf;
+}
+
+static ngx_http_module_t ngx_http_ratelimiter_module_ctx =
+{
+    NULL, /* preconfiguration */
+    ngx_http_ratelimiter_init, /* postconfiguration */
+    ngx_http_ratelimiter_create_main_conf, /* create main configuration */
+    NULL, /* init main configuration */
+    NULL, /* create server configuration */
+    NULL, /* merge server configuration */
+    NULL, /* create location configuration */
+    NULL /* merge location configuration */
+};
+
+static ngx_command_t ngx_http_ratelimiter_commands[] = {
+    { 
+        ngx_string("ratelimiter"),
+        NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE2, 
+        ngx_http_ratelimiter_createmem,
+        0,
+        0,
+        NULL 
+    },
+    ngx_null_command
+};
+
+ngx_module_t ngx_http_ratelimiter_module={
+    NGX_MODULE_V1,
+    &ngx_http_ratelimiter_module_ctx,
+    ngx_http_ratelimiter_commands,
+    NGX_HTTP_MODULE,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NGX_MODULE_V1_PADDING
+};
+
+
+
 static void
 ngx_http_ratelimiter_rbtree_insert_value(ngx_rbtree_node_t *temp,ngx_rbtree_node_t *node,ngx_rbtree_node_t *sentinel){
     ngx_rbtree_node_t **p;
-    ngx_http_ratelimiter_node_t lrn, lrnt;
+    ngx_http_ratelimiter_node_t* lrn, *lrnt;
     for ( ;; ) {
         if (node->key < temp->key) {
             p = &temp->left;
@@ -52,8 +144,8 @@ ngx_http_ratelimiter_rbtree_insert_value(ngx_rbtree_node_t *temp,ngx_rbtree_node
         else if (node->key > temp->key) {
             p = &temp->right;
         } else {
-            lrn = (ngx_http_ratelimiter_node_t *) &node->data; 
-            lrnt = (ngx_http_ratelimiter_node_t *) &temp->data;
+            lrn = (ngx_http_ratelimiter_node_t*) &node->data; 
+            lrnt = (ngx_http_ratelimiter_node_t*) &temp->data;
             p = (ngx_memn2cmp(lrn->data, lrnt->data, lrn->len, lrnt->len) < 0)? &temp->left : &temp->right; 
         }
 
@@ -109,6 +201,7 @@ ngx_http_ratelimiter_lookup(ngx_http_request_t *r, ngx_http_ratelimiter_conf_t *
                 return NGX_DECLINED;
             } 
             else {
+                lr->last = now;
                 return NGX_HTTP_FORBIDDEN;
             }
         }
@@ -158,6 +251,8 @@ ngx_http_ratelimiter_expire(ngx_http_request_t *r,ngx_http_ratelimiter_conf_t *c
 
         lr = ngx_queue_data(q, ngx_http_ratelimiter_node_t, queue);
 
+        node = (ngx_rbtree_node_t*)((u_char*)lr-offsetof(ngx_rbtree_node_t,data));
+
         ms = (ngx_msec_int_t) (now - lr->last); 
         
         if (ms < conf->interval) {
@@ -169,23 +264,13 @@ ngx_http_ratelimiter_expire(ngx_http_request_t *r,ngx_http_ratelimiter_conf_t *c
     }
 }
 
-static ngx_command_t ngx_http_ratelimiter_commands[] = {
-    { 
-        ngx_string("ratelimiter"),
-        NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE2, 
-        ngx_http_ratelimiter_createmem,
-        0,
-        0,
-        NULL 
-    },
-    ngx_null_command
-}
+
 
 static char *
-ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t cmd, void conf) {
+ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t* cmd, void* conf) {
     ngx_str_t *value;
     ngx_shm_zone_t *shm_zone;
-    ngx_http_ratelimiter_conf_t mconf = (ngx_http_ratelimiter_conf_t )conf;
+    ngx_http_ratelimiter_conf_t* mconf = (ngx_http_ratelimiter_conf_t* )conf;
     ngx_str_t name = ngx_string("ratelimiter_shm"); 
     value = cf->args->elts;
     mconf->interval = 1000*ngx_atoi(value[1].data, value[1].len); 
@@ -211,18 +296,7 @@ ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t cmd, void conf) {
     return NGX_CONF_OK;
 }
 
-static void *
-ngx_http_ratelimiter_create_main_conf(ngx_conf_t *cf) {
-    ngx_http_ratelimiter_conf_t *conf;
-    conf = ngx_pcalloc(cf->pool, sizeof(ngx_http_ratelimiter_conf_t));
-    if (conf == NULL) {
-        return NULL;
-    }
 
-    conf->interval = -1;
-    conf->shmsize = -1;
-    return conf;
-}
 
 static ngx_int_t
 ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data) {
@@ -247,7 +321,7 @@ ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data) {
 
     ngx_queue_init(&conf->sh->queue);
 
-    len = sizeof(" in ratelimiter \"\"") + shm_zone->shm.name.len;
+    size_t len = sizeof(" in ratelimiter \"\"") + shm_zone->shm.name.len;
     conf->shpool->log_ctx = ngx_slab_alloc(conf->shpool, len);
     if (conf->shpool->log_ctx == NULL) {
         return NGX_ERROR;
@@ -258,50 +332,4 @@ ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data) {
     return NGX_OK;
 }
 
-static ngx_http_module_t ngx_http_ratelimiter_module_ctx =
-{
-    NULL, /* preconfiguration */
-    ngx_http_ratelimiter_init, /* postconfiguration */
-    ngx_http_ratelimiter_create_main_conf, /* create main configuration */
-    NULL, /* init main configuration */
-    NULL, /* create server configuration */
-    NULL, /* merge server configuration */
-    NULL, /* create location configuration */
-    NULL /* merge location configuration */
-};
 
-static ngx_int_t
-ngx_http_ratelimiter_init(ngx_conf_t *cf)
-{
-    ngx_http_handler_pt *h;
-    ngx_http_core_main_conf_t *cmcf;
-    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module); 
-    h = ngx_array_push(&cmcf->phases[NGX_HTTP_PREACCESS_PHASE].handlers); 
-    if (h == NULL) {
-        return NGX_ERROR;
-    }
-
-    *h = ngx_http_ratelimiter_handler;
-    return NGX_OK;
-}
-
-static ngx_int_t
-ngx_http_ratelimiter_handler(ngx_http_request_t *r) {
-    size_t len;
-    uint32_t hash;
-    ngx_int_t rc;
-    ngx_http_ratelimiter_conf_t *conf;
-    conf = ngx_http_get_module_main_conf(r, ngx_http_ratelimiter_module); 
-    rc = NGX_DECLINED;
-    if (conf->interval == -1)
-        return rc;
-    len = r->connection->addr_text.len + r->uri.len;
-    u_char* data = ngx_palloc(r->pool, len); 
-    ngx_memcpy(data, r->uri.data, r->uri.len); 
-    ngx_memcpy(data+r->uri.len, r->connection->addr_text.data, r->connection->addr_text.len); /
-    hash = ngx_crc32_short(data, len);
-    ngx_shmtx_lock(&conf->shpool->mutex); 
-    rc = ngx_http_ratelimiter_lookup(r, conf, hash, data, len); 
-    ngx_shmtx_unlock(&conf->shpool->mutex); 
-    return rc;
-}
