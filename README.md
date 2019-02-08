@@ -16,11 +16,11 @@ download the nginx source code
 
 ## nginx.conf
 
-    # add below option into http section, this option means rate limit in 1s and the slab size is 10mb
-    ratelimiter 1 10m;
+    # add below option into http section, this option means rate limit in 500ms and the slab size is 10mb
+    ratelimiter 500 10m;
 
 ## test
 
     ./nginx
 
-you will see the 403 Forbidden in the browser when you refresh the same page many times during 1s
+you will see the `403 Forbidden` in the browser when you refresh the same page many times during 500ms

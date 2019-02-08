@@ -273,7 +273,7 @@ ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t* cmd, void* conf) {
     ngx_http_ratelimiter_conf_t* mconf = (ngx_http_ratelimiter_conf_t* )conf;
     ngx_str_t name = ngx_string("ratelimiter_shm"); 
     value = cf->args->elts;
-    mconf->interval = 1000*ngx_atoi(value[1].data, value[1].len); 
+    mconf->interval = ngx_atoi(value[1].data, value[1].len); 
     if (mconf->interval == NGX_ERROR || mconf->interval == 0) {
         mconf->interval = -1;
         return "invalid value";
