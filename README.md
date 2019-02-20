@@ -1,5 +1,6 @@
 # nginx_module_ratelimiter
-a module can limit the duplicate request numbers
+
+a module can limit the duplicate request amount in some interval
 
 ## precondition
 
@@ -17,10 +18,11 @@ download the nginx source code
 ## nginx.conf
 
     # add below option into http section, this option means rate limit in 500ms and the slab size is 10mb
-    ratelimiter 500 10m;
+    ratelimiter 500 10m; 
+    # the slab size means the capacity of the requests in interval,if this memory is run out, nginx would block the other requests until the interval ends.
 
 ## test
 
     ./nginx
 
-you will see the `403 Forbidden` in the browser when you refresh the same page many times during 500ms
+open http://localhost , you will see the `403 Forbidden` in the browser when you refresh the same page many times during 500ms
