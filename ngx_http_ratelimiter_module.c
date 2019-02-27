@@ -3,7 +3,7 @@
 #include "ngx_buf.h"
 #include "ngx_module.h"
 #include "ngx_conf_file.h"
-#include "ngx_http.h"  // 必须在ngx_http_request.h之前包含该文件
+#include "ngx_http.h" 
 #include "ngx_http_request.h"
 #include "ngx_http_config.h"
 #include "ngx_http_core_module.h"
@@ -39,6 +39,71 @@ ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t *cmd, void* conf);
 
 static void
 ngx_http_ratelimiter_expire(ngx_http_request_t *r,ngx_http_ratelimiter_conf_t *conf);
+
+static ngx_int_t
+ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data);
+
+static ngx_int_t
+ngx_http_ratelimiter_handler(ngx_http_request_t *r);
+
+static ngx_int_t
+ngx_http_ratelimiter_init(ngx_conf_t *cf);
+
+static void *
+ngx_http_ratelimiter_create_main_conf(ngx_conf_t *cf);
+
+
+
+static ngx_http_module_t ngx_http_ratelimiter_module_ctx =
+{
+    NULL, /* preconfiguration */
+    ngx_http_ratelimiter_init, /* postconfiguration */
+    ngx_http_ratelimiter_create_main_conf, /* create main configuration */
+    NULL, /* init main configuration */
+    NULL, /* create server configuration */
+    NULL, /* merge server configuration */
+    NULL, /* create location configuration */
+    NULL /* merge location configuration */
+};
+
+static ngx_command_t ngx_http_ratelimiter_commands[] = {
+    { 
+        ngx_string("ratelimiter"),
+        NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE2, 
+        ngx_http_ratelimiter_createmem,
+        0,
+        0,
+        NULL 
+    },
+    ngx_null_command
+};
+
+ngx_module_t ngx_http_ratelimiter_module={
+    NGX_MODULE_V1,
+    &ngx_http_ratelimiter_module_ctx,
+    ngx_http_ratelimiter_commands,
+    NGX_HTTP_MODULE,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NGX_MODULE_V1_PADDING
+};
+
+static void
+ngx_http_ratelimiter_rbtree_insert_value(ngx_rbtree_node_t *temp,ngx_rbtree_node_t *node,ngx_rbtree_node_t *sentinel);
+
+static ngx_int_t
+ngx_http_ratelimiter_lookup(ngx_http_request_t *r, ngx_http_ratelimiter_conf_t *conf, ngx_uint_t hash, u_char* data, size_t len);
+
+static void
+ngx_http_ratelimiter_expire(ngx_http_request_t *r,ngx_http_ratelimiter_conf_t *conf) ;
+
+static char *
+ngx_http_ratelimiter_createmem(ngx_conf_t *cf, ngx_command_t* cmd, void* conf);
 
 static ngx_int_t
 ngx_http_ratelimiter_shm_init(ngx_shm_zone_t *shm_zone, void *data);
@@ -91,47 +156,6 @@ ngx_http_ratelimiter_create_main_conf(ngx_conf_t *cf) {
     conf->shmsize = -1;
     return conf;
 }
-
-static ngx_http_module_t ngx_http_ratelimiter_module_ctx =
-{
-    NULL, /* preconfiguration */
-    ngx_http_ratelimiter_init, /* postconfiguration */
-    ngx_http_ratelimiter_create_main_conf, /* create main configuration */
-    NULL, /* init main configuration */
-    NULL, /* create server configuration */
-    NULL, /* merge server configuration */
-    NULL, /* create location configuration */
-    NULL /* merge location configuration */
-};
-
-static ngx_command_t ngx_http_ratelimiter_commands[] = {
-    { 
-        ngx_string("ratelimiter"),
-        NGX_HTTP_MAIN_CONF|NGX_CONF_TAKE2, 
-        ngx_http_ratelimiter_createmem,
-        0,
-        0,
-        NULL 
-    },
-    ngx_null_command
-};
-
-ngx_module_t ngx_http_ratelimiter_module={
-    NGX_MODULE_V1,
-    &ngx_http_ratelimiter_module_ctx,
-    ngx_http_ratelimiter_commands,
-    NGX_HTTP_MODULE,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    NGX_MODULE_V1_PADDING
-};
-
-
 
 static void
 ngx_http_ratelimiter_rbtree_insert_value(ngx_rbtree_node_t *temp,ngx_rbtree_node_t *node,ngx_rbtree_node_t *sentinel){
