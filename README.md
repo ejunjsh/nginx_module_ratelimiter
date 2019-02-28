@@ -9,6 +9,7 @@ download the nginx source code
 ## configure
 
     # git clone this repo
+    # go to the nginx source code folder
     # specify this repo path of your system
     ./configure --add-module=/home/sky/code/nginx_module_ratelimiter
 
@@ -18,7 +19,7 @@ download the nginx source code
 
 ## nginx.conf
 
-    # add below option into http section, this option means rate limit in 500ms and the slab size is 10mb
+    # add below ratelimiter option into http section, this option means rate limit in 500ms and the slab size is 10mb
     http {
         ....
         ratelimiter 500 10m; 
