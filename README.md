@@ -8,6 +8,7 @@ download the nginx source code
 
 ## configure
 
+    # git clone this repo
     # specify this repo path of your system
     ./configure --add-module=/home/sky/code/nginx_module_ratelimiter
 
@@ -23,7 +24,7 @@ download the nginx source code
         ratelimiter 500 10m; 
         ....
     }
-    # the slab size means the capacity of the requests in interval,
+    # the slab size means the maximun memory of the income requests in interval,
     # if this memory is run out, nginx would block the other requests until the interval ends.
 
 ## test
