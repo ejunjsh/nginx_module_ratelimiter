@@ -19,14 +19,17 @@ download the nginx source code
 
 ## nginx.conf
 
-    # add below ratelimiter option into http section, this option means rate limit in 500ms and the slab size is 10mb
+    # add below ratelimiter option into http section:ratelimiter [interval(ms)] [slab size(m/k/g)]
     http {
         ....
         ratelimiter 500 10m; 
         ....
     }
-    # the slab size means the maximun memory of the income requests in interval,
-    # if this memory is run out, nginx would block the other requests until the interval ends.
+    # interval means only allow one same request during this interval(or a same request will expire after this interval)
+    # if another same request is incoming,the nginx will drop this request and return 403
+    # slab size represets the total memory that store the all unexpired requests, 
+    # if this memory is run out, the nginx will drop the following requests and return 403.
+    # if the requests of slab memory expire, the memory will be released and treats the new requests again.
 
 ## test
 
