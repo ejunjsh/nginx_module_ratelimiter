@@ -36,3 +36,7 @@ download the nginx source code
     ./nginx
 
 open http://localhost , you will see the `403 Forbidden` in the browser when you refresh the same page many times during 500ms
+
+## reference
+
+[深入理解Nginx（第2版）](https://book.douban.com/subject/26745255/)
