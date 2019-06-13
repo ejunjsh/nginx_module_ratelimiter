@@ -1,6 +1,6 @@
 # nginx_module_ratelimiter
 
-a module can limit the duplicate request amount in some interval
+a nignx http module that limits same request number in fixed interval
 
 ## precondition
 
